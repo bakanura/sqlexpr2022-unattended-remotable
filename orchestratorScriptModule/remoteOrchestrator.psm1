@@ -1,74 +1,65 @@
-# File: Remote-Orchestrator.psm1
-# Purpose: General reusable module for remote orchestration
+# File: Orchestrator.ps1
+# Purpose: Generic orchestrator for remote operations
+# Requires: Remote-Orchestrator.psm1
+
+[CmdletBinding(SupportsShouldProcess)]
+Param (
+    [Parameter(Mandatory = $true)][string]$VMAdmin = $env:VMAdmin,
+    [Parameter(Mandatory = $true)][string]$VMPassword = $env:VMPassword,
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$')]
+    [string]$VMIPAddress = $env:VMIPAddress,
+    [Parameter(Mandatory = $true)][ValidateLength(1, 15)][string]$ComputerName = $env:ComputerName,
+    [Parameter(Mandatory = $false)][string]$EXTRA_SCRIPTS_PATH = ".\Scripts"
+)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 #------------------------------------------------------------
-# Public: Initialize-RemoteSession
+# Import orchestrator module
 #------------------------------------------------------------
-function Initialize-RemoteSession {
-    [CmdletBinding()]
-    Param (
-        [Parameter(Mandatory)][string]$VMAdmin,
-        [Parameter(Mandatory)][string]$VMPassword,
-        [Parameter(Mandatory)][ValidatePattern('^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$')]
-        [string]$VMIPAddress,
-        [string]$HelperScriptsPath
-    )
+Import-Module ./Remote-Orchestrator.psm1 -Force
 
-    $credential = New-SecureCredential -Username $VMAdmin -Password $VMPassword
-    Initialize-WinRMConfiguration -IPAddress $VMIPAddress
+#------------------------------------------------------------
+# Initialize remote session
+#------------------------------------------------------------
+$sessionInfo = Initialize-RemoteSession -VMAdmin $VMAdmin `
+                                        -VMPassword $VMPassword `
+                                        -VMIPAddress $VMIPAddress `
+                                        -HelperScriptsPath $EXTRA_SCRIPTS_PATH
 
-    $session = New-PSSession -ComputerName $VMIPAddress `
-                             -Credential $credential `
-                             -SessionOption (New-PSSessionOption -IdleTimeout ([TimeSpan]::FromMinutes(120).TotalMilliseconds))
+#------------------------------------------------------------
+# Define operation scripts (edit this for your workload)
+#------------------------------------------------------------
+$operationScripts = @(
+    # Example 1
+    @{ Path = "C:\RemoteOps\installDotNet.ps1"; Args = @{
+            NetFrameworkVersions = "3.5"
+            psexecPath           = "C:\Temp\Tools\PsExec.exe"
+    }},
+    # Example 2
+    @{ Path = "C:\RemoteOps\installSqlExpress.ps1"; Args = @{
+            instanceName = "sqlexpress2022"
+            SA           = "sa"
+            SAPWD        = "sqlexpress2022pwd"
+            SQLMAXMEMORY = 8192
+            directory    = "C:\Temp"
+    }}
+)
 
-    return [pscustomobject]@{
-        Session      = $session
-        Credential   = $credential
-        ComputerName = $VMIPAddress
-        HelperPath   = $HelperScriptsPath
-    }
+#------------------------------------------------------------
+# Run all operations in sequence
+#------------------------------------------------------------
+foreach ($script in $operationScripts) {
+    Run-RemoteScript -SessionInfo $sessionInfo `
+                     -ScriptPath $script.Path `
+                     -Arguments $script.Args
+    Start-Sleep -Seconds 30  # optional delay for reboot-sensitive steps
 }
 
 #------------------------------------------------------------
-# Public: Run-RemoteScript
+# Cleanup
 #------------------------------------------------------------
-function Run-RemoteScript {
-    [CmdletBinding()]
-    Param (
-        [Parameter(Mandatory)]$SessionInfo,
-        [Parameter(Mandatory)][string]$ScriptPath,
-        [hashtable]$Arguments = @{}
-    )
-
-    if (-not (Test-Path $ScriptPath)) {
-        throw "Remote script missing: $ScriptPath"
-    }
-
-    Write-StructuredLog "Running remote script: $ScriptPath with args: $($Arguments | Out-String)"
-
-    Invoke-WithModernRetry -FilePath $ScriptPath `
-                           -SessionRef ([ref]$SessionInfo.Session) `
-                           -Credential $SessionInfo.Credential `
-                           -ComputerName $SessionInfo.ComputerName `
-                           -InitFunctionFilePaths @(Join-Path $SessionInfo.HelperPath "Write-StructuredLog.ps1") `
-                           -ArgumentList @($Arguments)
-}
-
-#------------------------------------------------------------
-# Public: Close-RemoteSession
-#------------------------------------------------------------
-function Close-RemoteSession {
-    [CmdletBinding()]
-    Param (
-        [Parameter(Mandatory)]$SessionInfo
-    )
-    if ($SessionInfo.Session) {
-        Remove-PSSession $SessionInfo.Session
-        Write-StructuredLog "✔ Remote session cleaned up."
-    }
-}
-
-Export-ModuleMember -Function Initialize-RemoteSession, Run-RemoteScript, Close-RemoteSession
+Close-RemoteSession -SessionInfo $sessionInfo
+Write-Host "🎉 Orchestration completed successfully."
