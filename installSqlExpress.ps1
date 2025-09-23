@@ -194,6 +194,19 @@ $detailLog = Join-Path $logFolder "Detail.txt"
 do { Start-Sleep -Seconds 2 } while (-not (Test-Path $detailLog))
 
 # ----------------------------
+# Wait for SQLScenarioEngine to start before monitoring logs
+# ----------------------------
+$maxWaitinSecs = 20
+$waited = 0
+while (-not (Get-Process -Name "SCENARIOENGINE" -ErrorAction SilentlyContinue) -and $waited -lt $maxWaitinSecs) {
+    Start-Sleep -Seconds 1
+    $waited++
+}
+
+if (-not (Get-Process -Name "SCENARIOENGINE" -ErrorAction SilentlyContinue)) {
+    throw "SQLScenarioEngine did not start within $maxWaitinSecs seconds. Aborting log monitoring."
+}
+# ----------------------------
 # Monitor installer log and capture error codes
 # ----------------------------
 $errorCodes = @()
