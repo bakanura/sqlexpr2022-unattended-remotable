@@ -136,13 +136,13 @@ function quoteAccountIfNeeded {
 # Construct service accounts and INI
 # ----------------------------
 $sqlServiceAccountFull = "NT Service\MSSQL`$$instanceName"
-$sqlAgentAccountFull   = "NT Service\SQLAgent`$$instanceName"
+#$sqlAgentAccountFull   = "NT Service\SQLAgent`$$instanceName"
 
 $sqlSvcAccount = quoteAccountIfNeeded -account $sqlServiceAccountFull
-$agtSvcAccount = quoteAccountIfNeeded -account $sqlAgentAccountFull
+#$agtSvcAccount = quoteAccountIfNeeded -account $sqlAgentAccountFull
 
 Write-Host "SQL Service Account: $sqlSvcAccount"
-Write-Host "SQL Agent Account: $agtSvcAccount"
+#Write-Host "SQL Agent Account: $agtSvcAccount"
 
 $iniContent = @(
     '[OPTIONS]',
@@ -165,11 +165,20 @@ Set-Content -Path $configFilePath -Value $iniContent -Encoding ASCII
 Write-Host "INI file written to: $configFilePath"
 
 # ----------------------------
-# Start SQL Express synchronously via PsExec
+# Start SQL Express via PsExec with progress monitoring
 # ----------------------------
 Write-Host "Starting SQL Express installation using PsExec as SYSTEM..."
 $psexecArgs = "-s `"$setupExe`" /ConfigurationFile=`"$configFilePath`" /SkipInstallerRunCheck /Q /IACCEPTSQLSERVERLICENSETERMS"
-$proc = Start-Process -FilePath $psexecPath -ArgumentList $psexecArgs -Wait -PassThru
+$proc = Start-Process -FilePath $psexecPath -ArgumentList $psexecArgs -PassThru
+
+$lastStatus = Get-Date
+while (-not $proc.HasExited) {
+    Start-Sleep -Seconds 5
+    if ((Get-Date) -gt $lastStatus.AddSeconds(60)) {
+        Write-Host "[STATUS] SQL Express installer still running..."
+        $lastStatus = Get-Date
+    }
+}
 
 Write-Host "SQL setup exited with code: $($proc.ExitCode)"
 if ($proc.ExitCode -ne 0) {
@@ -194,21 +203,23 @@ $detailLog = Join-Path $logFolder "Detail.txt"
 do { Start-Sleep -Seconds 2 } while (-not (Test-Path $detailLog))
 
 # ----------------------------
-# Wait for SQLScenarioEngine to start before monitoring logs
-# ----------------------------
-$maxWaitinSecs = 20
-$waited = 0
-while (-not (Get-Process -Name "SCENARIOENGINE" -ErrorAction SilentlyContinue) -and $waited -lt $maxWaitinSecs) {
-    Start-Sleep -Seconds 1
-    $waited++
-}
-
-if (-not (Get-Process -Name "SCENARIOENGINE" -ErrorAction SilentlyContinue)) {
-    throw "SQLScenarioEngine did not start within $maxWaitinSecs seconds. Aborting log monitoring."
-}
-# ----------------------------
 # Monitor installer log and capture error codes
 # ----------------------------
+
+# Ensure SCENARIOENGINE is running before log monitoring
+$scenarioEngineWait = 0
+$scenarioEngineMaxWait = 20
+do {
+    $setupProc = Get-Process -Name "SCENARIOENGINE" -ErrorAction SilentlyContinue
+    if ($setupProc) { break }
+    Start-Sleep -Seconds 1
+    $scenarioEngineWait++
+} while ($scenarioEngineWait -lt $scenarioEngineMaxWait)
+
+if (-not $setupProc) {
+    throw "SQLScenarioEngine did not start within $scenarioEngineMaxWait seconds. Aborting log monitoring."
+}
+
 $errorCodes = @()
 $lastStatus = Get-Date
 
