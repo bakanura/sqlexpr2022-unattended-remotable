@@ -19,23 +19,31 @@ $serviceName    = "MSSQL`$" + $instanceName
 $serverInstance = ".\$instanceName"
 
 # ----------------------------
-# Create user-setup.sql - Example
+# Example: define SQL commands in a way users can customize
 # ----------------------------
+# Replace these lines with your own SQL commands as needed
+$exampleLoginName = "MY_USER"              # <- Change to your desired SQL login
+$examplePassword  = "ChangeMe123!"         # <- Change to your desired password
+$defaultLanguage  = "English"              # <- Change language if needed
+$serverRoles      = @("sysadmin", "dbcreator")  # <- Add/remove server roles as needed
+
 $contentLines = @(
-    "-- Set default language to German",
-    "EXEC sp_configure 'default language', 2;",
+    "-- Set default language for the instance",
+    "EXEC sp_configure 'default language', 0;",  # 0 = English, 2 = German, etc.
     "RECONFIGURE;",
     "",
-    "-- Create WINACS SQL login",
-    "CREATE LOGIN [WINACS] WITH PASSWORD = N'NOT4ALL', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF, DEFAULT_LANGUAGE = [Deutsch];",
+    "-- Create a new SQL login",
+    "CREATE LOGIN [$exampleLoginName] WITH PASSWORD = N'$examplePassword', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF, DEFAULT_LANGUAGE = [$defaultLanguage];",
     "",
-    "-- Assign server roles",
-    "ALTER SERVER ROLE [sysadmin] ADD MEMBER [WINACS];",
-    "ALTER SERVER ROLE [dbcreator] ADD MEMBER [WINACS];",
-    "",
-    "-- Set default language for WINACS",
-    "ALTER LOGIN [WINACS] WITH DEFAULT_LANGUAGE = [Deutsch];"
+    "-- Assign server roles"
 )
+foreach ($role in $serverRoles) {
+    $contentLines += "ALTER SERVER ROLE [$role] ADD MEMBER [$exampleLoginName];"
+}
+$contentLines += ""
+$contentLines += "-- Set default language for the new login"
+$contentLines += "ALTER LOGIN [$exampleLoginName] WITH DEFAULT_LANGUAGE = [$defaultLanguage];"
+
 $content = $contentLines -join "`r`n"
 
 # ----------------------------
@@ -46,7 +54,7 @@ if (-not (Test-Path $setupDir)) {
 }
 
 $content | Set-Content -Path $setupFile -Encoding UTF8
-Write-Host "user-setup.sql created at $setupFile"
+Write-Host "Custom SQL setup script created at $setupFile"
 
 # ----------------------------
 # Wait for SQL Server service to be running
@@ -59,7 +67,7 @@ do {
 Write-Host "SQL Server service is running."
 
 # ----------------------------
-# Wait for sqlcmd.exe
+# Locate sqlcmd.exe
 # ----------------------------
 $maxWaitSeconds    = 180
 $retryDelaySeconds = 5
@@ -83,14 +91,14 @@ if (-not $sqlcmdPath) {
 Write-Host "Found sqlcmd.exe at $sqlcmdPath"
 
 # ----------------------------
-# Execute SQL script using Windows Authentication (SYSTEM / local admin)
+# Execute SQL script
 # ----------------------------
 Write-Host "Executing user-setup.sql on instance $serverInstance using Windows Authentication..."
 try {
     & $sqlcmdPath -S $serverInstance -E -b -i $setupFile
-    Write-Host "SQL script executed successfully with Windows Authentication."
+    Write-Host "SQL script executed successfully."
 } catch {
     throw "Failed to execute user-setup.sql: $_"
 }
 
-Write-Host "WINACS login and roles configured. SA account is now ready for use."
+Write-Host "Custom SQL login and roles configured successfully. You're good to go!"
