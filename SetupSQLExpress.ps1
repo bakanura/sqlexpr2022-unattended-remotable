@@ -19,7 +19,7 @@ $serviceName    = "MSSQL`$" + $instanceName
 $serverInstance = ".\$instanceName"
 
 # ----------------------------
-# Create user-setup.sql
+# Create user-setup.sql - Example
 # ----------------------------
 $contentLines = @(
     "-- Set default language to German",

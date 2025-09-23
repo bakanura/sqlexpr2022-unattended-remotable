@@ -13,12 +13,13 @@ foreach ($k in $ParamHash.Keys) {
 # ----------------------------
 # Paths
 # ----------------------------
-$directory = "C:\Temp"
 $scriptFile = Join-Path $directory "TempElevatedUserCreation.ps1"
 $psexecPath = Join-Path $directory "Tools\PsExec.exe"
 
 # Ensure temp folder exists
-if (-not (Test-Path $directory)) { New-Item -ItemType Directory -Force -Path $directory | Out-Null }
+if (-not (Test-Path $directory)) { 
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null 
+}
 
 # ----------------------------
 # Build elevated script
@@ -50,9 +51,15 @@ if ($members -notcontains $VMAdmin) {
 }
 
 # ----------------------------
-# Grant 'Log on as a service' using secedit
+# Service account adjustments
 # ----------------------------
+# Make password never expire
+Set-LocalUser -Name $VMAdmin -PasswordNeverExpires $true
+
+# Get SID of account
 $accountSid = (New-Object System.Security.Principal.NTAccount($VMAdmin)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+
+# Build temporary security policy
 $secpolFile = Join-Path $env:TEMP 'secpol.inf'
 @"
 [Unicode]
@@ -61,14 +68,19 @@ Unicode=yes
 signature=`$CHICAGO$
 Revision=1
 [Privilege Rights]
-SeServiceLogonRight = *S-1-5-32-544,$accountSid
+SeServiceLogonRight = $accountSid
+SeDenyInteractiveLogonRight = $accountSid
+SeDenyRemoteInteractiveLogonRight = $accountSid
 "@ | Out-File -FilePath $secpolFile -Encoding Unicode
 
+# Apply security policy
 secedit.exe /import /db secedit.sdb /cfg $secpolFile /quiet
 secedit.exe /configure /db secedit.sdb /quiet
+
+# Cleanup
 Remove-Item $secpolFile
 
-Write-Host "Log on als Dienst granted."
+Write-Host "Service account rights applied: Log on as a service granted, interactive logons denied."
 '@
 
 # ----------------------------
@@ -91,6 +103,11 @@ Write-Host "Script executed successfully."
 Remove-Item $scriptFile -Force
 Write-Host "Temporary script removed."
 
-Write-Host "Restarting System to finalize pending updates before continuing..."
-cmd /c shutdown /a *> $null
-cmd /c shutdown /r /t 0 *> $null
+Write-Host "Restarting system to finalize pending updates..."
+# Exit cleanly for orchestrator
+        # Abort any pending shutdowns
+        cmd.exe /c shutdown /a *> $null
+
+        # Force an immediate restart
+        cmd.exe /c shutdown /r /t 0 /f *> $null
+        exit 0
